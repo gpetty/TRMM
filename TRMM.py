@@ -1,8 +1,14 @@
+# -*- coding: utf-8 -*-
+# <nbformat>3.0</nbformat>
+
+# <codecell>
+
 import sys
 import os.path
 import time
 import datetime
 import commands
+import subprocess
 from pyhdf.SD import SD, SDC
 import numpy as np
 from StringIO import StringIO
@@ -39,11 +45,8 @@ default.startepochsec = 0.0
 default.endepochsec = 0.0
 default.slat = MISSINGVAL
 default.exists = False
+default.compression = None
 
-# load edge coordinate file for TMI orbits
-TMIedgefile = TMIroot + "/TMIedges.txt"
-TMIedges = np.fromfile(TMIedgefile, dtype=float, count=-1, sep=' ')
-TMIedges = np.reshape(TMIedges, (len(TMIedges)/4,2,2))
 
 # Load resolution matching coefficients for TMI
 #
@@ -170,30 +173,37 @@ def orbitquery(orbitno,orb):
   return result
 
 def TMIquery(orbitno):
-# retrieve basic parameters from index file
-  result = orbitquery(orbitno,tmiorb)
-
-# construct associated swath boundaries
-  edges = []
-  for i in range(len(TMIedges)):
-    alat0, alon0 = TMIedges[i][0]
-    alat1, alon1 = TMIedges[i][1]
-    alon0 += result.slat
-    alon1 += result.slat
-    if alon0 <= -180.0:
-      alon0 += 360.0
-    if alon0 > 180.0:
-      alon0 -= 360.0
-    if alon1 <= -180.0:
-      alon1 += 360.0
-    if alon1 > 180.0:
-      alon1 -= 360.0
-    edges.append(((alat0,alon0), (alat1,alon1)))
-  result.edges = edges
-  return result
+  return orbitquery(orbitno,tmiorb)
 
 def PRquery(orbitno):
   return orbitquery(orbitno,prorb)
+
+def orbit_exists(filename):
+  return (os.path.exists(filename) or os.path.exists(filename + '.gz') or os.path.exists(filename + '.Z'))
+
+
+def uncompress_orbit(filename):
+  if os.path.exists(filename):
+    pass
+  elif os.path.exists(filename + '.gz'):
+    comstring = 'gunzip ' + filename + '.gz'
+    commands.getstatusoutput(comstring)
+  elif os.path.exists(filename + '.Z'):
+    comstring = 'uncompress ' + filename + '.Z'
+    commands.getstatusoutput(comstring)
+  return
+
+def recompress_orbit(filename):
+  if os.path.exists(filename + '.gz') or os.path.exists(filename + '.Z'):
+    return
+  elif os.path.exists(filename):
+    comstring = 'gzip ' + filename + '.gz'
+    commands.getstatusoutput(comstring)
+    return
+  else:
+    print 'File ',filename, ' not found in compressed or uncompressed form.'
+    return
+
 
 
 def orbitfetch(orbitno,sensor):
@@ -219,20 +229,8 @@ def orbitfetch(orbitno,sensor):
   # check whether file already exists on local server, including
   # possible compressed forms
 
-  localcopy = os.path.exists(orbitinfo.localpath)
-  if localcopy:
+  if orbit_exists(orbitinfo.localpath):
     return orbitinfo
-
-  localcopy = os.path.exists(orbitinfo.localpath+".Z")
-  if localcopy:
-    orbitinfo.localpath = orbitinfo.localpath+".Z"
-    return orbitinfo
-
-  localcopy = os.path.exists(orbitinfo.localpath+".gz")
-  if localcopy:
-    orbitinfo.localpath = orbitinfo.localpath+".gz"
-    return orbitinfo
-
   
   # if it does not, fetch it from NASA server
 
@@ -276,26 +274,16 @@ def orbitfetch(orbitno,sensor):
   relpath = relpath + filesuffix
 #  print 'relpath ',relpath
   comstring = '/sw/bin/lftp -c "user anonymous gwpetty@wisc.edu ; get ftp://disc2.nascom.nasa.gov/ftp/data/s4pa/'+ remotesubdir + relpath + ' -o ' + HDFroot + relpath +'"'
-#  print comstring
+  print comstring
   commands.getoutput(comstring)
+  #subprocess.Popen(comstring)
 
 
   # check for all possible variations on local filename
-  localcopy = os.path.exists(orbitinfo.localpath)
-  if localcopy:
+  if orbit_exists(orbitinfo.localpath):
     return orbitinfo
-
-  localcopy = os.path.exists(orbitinfo.localpath+".Z")
-  if localcopy:
-    orbitinfo.localpath = orbitinfo.localpath+".Z"
-    return orbitinfo
-
-  localcopy = os.path.exists(orbitinfo.localpath+".gz")
-  if localcopy:
-    orbitinfo.localpath = orbitinfo.localpath+".gz"
-    return orbitinfo
-
-  return default
+  else:
+    return default
 
 
 def TMIfetch(orbitno):
@@ -305,15 +293,18 @@ def PRfetch(orbitno):
   return orbitfetch(orbitno,"PR")
 
 class TMIorbit:
-  def __init__(self,filename):
+  def __init__(self,theorbit):
 
 #  "/Volumes/data2b/TRMM/TMI/HDF/2001/237/1B11.20010825.21545.7.HDF"
+    filename = theorbit.localpath#  "/Volumes/data2b/TRMM/TMI/HDF/2001/237/1B11.20010825.21545.7.HDF"
+
     words1 = filename.split('/')
-#    print words1
+  #    print words1
     words2 = words1[-1].split('.')
-#    print words2
+  #    print words2
     self.orbitno = int(words2[2])
-#    print 'self.orbitno =',self.orbitno
+  #    print 'self.orbitno =',self.orbitno
+
 
     TMI_SDS = SD(filename, SDC.READ)   
 #        print dir(TMI_SDS)
@@ -484,4 +475,99 @@ class TMIorbit:
           mt85h[scan,pixel] = np.sum(self.t85h[scan-5: scan+6, 2*pixel-5:2*pixel+6]*co85h[2*pixel - 5])
 
     return mt10v, mt10h, mt19v, mt19h, mt21v, mt37v, mt37h, mt85v, mt85h
+
+
+
+
+# <codecell>
+
+class PRorbit:
+  def __init__(self,theorbit):
+
+#  "/Volumes/data2b/TRMM/TMI/HDF/2001/237/1B11.20010825.21545.7.HDF"
+    filename = theorbit.localpath
+    print 'localpath = ',filename
+    words1 = filename.split('/')
+#    print words1
+    words2 = words1[-1].split('.')
+#    print words2
+    self.orbitno = int(words2[2])
+#    print 'self.orbitno =',self.orbitno
+
+
+    uncompress_orbit(filename)
+    PR_SDS = SD(filename, SDC.READ)
+  
+#        print dir(TMI_SDS)
+#        print TMI_SDS.datasets()
+
+    #tempb = TMI_SDS.select('lowResCh')  # get all low-res channels
+    #tempb = np.array(tempb[:])              # convert to arrays
+    #tempb = (tempb/100.0) + 100.0           # convert to physical units
+    #self.t10v = tempb[:, :, 0] 
+    #self.t10h = tempb[:, :, 1]
+    #self.t19v = tempb[:, :, 2]
+    #self.t19h = tempb[:, :, 3]
+    #self.t21v = tempb[:, :, 4]
+    #self.t37v = tempb[:, :, 5]
+    #self.t37h = tempb[:, :, 6]
+
+    #tempb = TMI_SDS.select('highResCh')  # get all hi-res channels
+    #tempb = np.array(tempb[:])                # convert to arrays
+    #tempb = (tempb/100.0) + 100.0             # convert to physical units
+    #self.t85v = tempb[:, :, 0]
+    #self.t85h = tempb[:, :, 1]
+
+    lat_hi = PR_SDS.select('Latitude')
+    lon_hi = PR_SDS.select('Longitude')
+    self.lat_hi = np.array(lat_hi[:])
+    self.lon_hi = np.array(lon_hi[:])
+    ihi, jhi = self.lat_hi.shape
+
+    rain = PR_SDS.select('nearSurfRain')
+    self.rain = np.array(rain[:])
+
+    Year = PR_SDS.select('Year')
+    self.Year = np.array(Year[:])
+    Month = PR_SDS.select('Month')
+    self.Month = np.array(Month[:])
+    DayOfMonth = PR_SDS.select('DayOfMonth')
+    self.DayOfMonth = np.array(DayOfMonth[:])
+    DayOfYear = PR_SDS.select('DayOfYear')
+    self.DayOfYear = np.array(DayOfYear[:])
+    Hour = PR_SDS.select('Hour')
+    self.Hour = np.array(Hour[:])
+    Minute = PR_SDS.select('Minute')
+    self.Minute = np.array(Minute[:])
+    Second = PR_SDS.select('Second')
+    self.Second = np.array(Second[:])
+    MilliSecond = PR_SDS.select('MilliSecond')
+    self.MilliSecond = np.array(MilliSecond[:])
+    
+    validity = PR_SDS.select('validity')
+    self.validity = np.array(validity[:])
+
+    geoqual = PR_SDS.select('geoQuality')
+    self.geoqual = np.array(geoqual[:])
+
+    missing = PR_SDS.select('missing')
+    self.missing = np.array(missing[:])
+
+    dataqual = PR_SDS.select('dataQuality')
+    self.dataqual = np.array(dataqual[:])
+#    self.flag =  (self.missing == 0.0) & (self.validity == 0.0) & (self.geoqual == 0.0) & (self.dataqual == 0.0)
+    self.flag =  (self.missing == 0.0) 
+
+    scori = PR_SDS.select('SCorientation')
+    self.scori = np.array(scori[:])
+    PR_SDS.end()
+    
+    # we're done reading the input file.  Recompress if appropriate
+    
+    recompress_orbit(filename)
+
+	
+
+    
+    
 
