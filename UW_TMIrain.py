@@ -77,7 +77,7 @@ for cls in sfcclasses:   # Loop over classes
             fname = datapath + dbbasename +cls+'.'+dbd
             f = open(fname, 'r')
         else:
-            fname = dataurl + dbbasename +cls+'.'+dbd
+            fname = datapath + dbbasename +cls+'.'+dbd
             f = URLopener().open(fname)
                 
 #        print 'Loading data from ',fname
@@ -100,11 +100,25 @@ print
 
 class landclassmap:
     def __init__(self):
+        global dbaselocal
         global datapath
         
         fname = datapath + 'TRMM_classmap.dat'
         print 'Loading class map ',fname
-        landclassmap.data = np.loadtxt(fname, dtype='int')[:,1]
+
+
+        if dbaselocal:
+            landclassmap.data = np.loadtxt(fname, dtype='int')[:,1]
+        else:
+            f = URLopener().open(fname)
+            tmp = []
+            for line in f:
+                columns = line.split()
+                tmp.append(int(columns[1]))
+
+            f.close()        
+            landclassmap.data = np.array(tmp)
+
         landclassmap.data = np.reshape(landclassmap.data, (-1, 360))
         print 'Class map loaded'      
         
